@@ -1,0 +1,76 @@
+# -*- mode: python ; coding: utf-8 -*-
+
+block_cipher = None
+
+a = Analysis(
+    ['main_campus.py'],
+    pathex=[],
+    binaries=[],
+    datas=[
+        ('image.ico', '.'),
+        ('11409B.png', '.'),
+    ],
+    hiddenimports=[
+        'PySide6.QtCore',
+        'PySide6.QtGui',
+        'PySide6.QtWidgets',
+        'srun_encrypted',
+        'network',
+        'power_monitor',
+        'config_manager',
+        'logger',
+        'network_stats',
+        'hashlib',
+        'hmac',
+        'base64',
+        'json',
+        'time',
+        'math',
+        're',
+        'requests',
+        'platform',
+        'socket',
+        'logging',
+        'logging.handlers',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        'tkinter',
+        'matplotlib',
+        'numpy',
+        'scipy',
+        'pandas',
+        'PIL',
+    ],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='校园网认证助手_v2.0_正式版',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon='image.ico',
+)

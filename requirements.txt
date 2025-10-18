@@ -1,0 +1,4 @@
+requests>=2.25.0
+PySide6>=6.0.0
+Pillow>=8.0.0
+winshell>=0.6
