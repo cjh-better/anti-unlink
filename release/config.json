@@ -1,0 +1,10 @@
+{
+  "version": "1.00",
+  "username": "20241654",
+  "password": "***REDACTED***",
+  "channel": "@chinanet",
+  "auto_start": false,
+  "auto_login": false,
+  "auto_find_wifi": true,
+  "remember_password": true
+}
