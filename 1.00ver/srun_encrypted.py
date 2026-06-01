@@ -6,13 +6,15 @@
 """
 import hashlib
 import json
-import os
+import logging
 import time
 import hmac
 import base64
 import requests
 import re
 import math
+
+logger = logging.getLogger('CampusAuth')
 
 
 def get_md5(password):
@@ -150,10 +152,7 @@ def get_info(username, password, ip, ac_id, token):
         "enc_ver": "srun_bx1"
     }
 
-    # 使用str()然后正则替换，而非json.dumps
-    # 这样可以确保格式与原版完全一致
-    i = re.sub("'", '"', str(info_dict))
-    i = re.sub(" ", '', i)
+    i = json.dumps(info_dict, separators=(',', ':'))
 
     # 使用token作为key进行xEncode
     encoded = xEncode(i, token)
@@ -248,7 +247,7 @@ class SrunEncryptedAuth:
             # 获取challenge的URL（通常是 /cgi-bin/get_challenge）
             challenge_url = self.portal_url.replace('/srun_portal', '/get_challenge')
 
-            print(f"[获取Challenge] URL: {challenge_url}")
+            logger.debug(f"[获取Challenge] URL: {challenge_url}")
 
             response = self.session.get(
                 challenge_url,
@@ -257,7 +256,7 @@ class SrunEncryptedAuth:
                 timeout=5
             )
 
-            print("[获取Challenge] 已收到响应")
+            logger.debug(f"[获取Challenge] 响应: {response.text[:200]}")
 
             # 解析JSONP响应
             match = re.search(r'jQuery\w+\((.*)\)', response.text)
@@ -265,14 +264,14 @@ class SrunEncryptedAuth:
                 data = json.loads(match.group(1))
                 challenge = data.get('challenge')
                 if challenge:
-                    print(f"[获取Challenge] 成功: {challenge}")
+                    logger.debug(f"[获取Challenge] 成功")
                     return challenge
 
-            print("[获取Challenge] 失败: 未找到challenge")
+            logger.warning("[获取Challenge] 失败: 未找到challenge")
             return None
 
         except Exception as e:
-            print(f"[获取Challenge] 异常: {e}")
+            logger.error(f"[获取Challenge] 异常: {e}")
             return None
 
     def login(self, username, password, ip, ac_id=1):
@@ -288,12 +287,12 @@ class SrunEncryptedAuth:
             # 0. 先获取challenge (token)
             challenge = self.get_challenge(username, ip)
             if not challenge:
-                print("[加密登录] 错误: 未能获取challenge")
+                logger.warning("[加密登录] 未能获取challenge")
                 return False, "无法获取Challenge，请检查网络", None
 
             # 1. 生成HMAC-MD5加密的密码
-            hmac_md5 = get_hmac_md5(password, challenge)  # 仅HMAC-MD5值
-            hmac_password = "{MD5}" + hmac_md5  # 带前缀的完整密码
+            hmac_md5 = get_hmac_md5(password, challenge)
+            hmac_password = "{MD5}" + hmac_md5
 
             # 2. 生成info参数 (使用challenge作为xEncode的key)
             info_param = get_info(username, password, ip, ac_id, challenge)
@@ -339,7 +338,7 @@ class SrunEncryptedAuth:
             }
 
             # 7. 发送请求
-            print("[加密登录] 正在发送认证请求...")
+            logger.debug(f"[加密登录] 正在发送认证请求...")
 
             response = self.session.get(
                 self.portal_url,
@@ -348,7 +347,7 @@ class SrunEncryptedAuth:
                 timeout=10
             )
 
-            print(f"[加密登录] HTTP状态码: {response.status_code}")
+            logger.debug(f"[加密登录] HTTP状态码: {response.status_code}")
 
             # 8. 解析响应
             return self._parse_response(response.text)
@@ -372,6 +371,8 @@ class SrunEncryptedAuth:
                 # 尝试直接解析JSON
                 data = json.loads(response_text)
 
+            logger.debug("[解析响应] 收到响应数据")
+
             # 检查多种可能的字段
             error = str(data.get('error', '')).lower()
             error_msg = str(data.get('error_msg', '')).lower()
@@ -382,13 +383,8 @@ class SrunEncryptedAuth:
 
             # ===== 优先检查您学校的响应格式 =====
             # 检查 code: 0 + message: success (您学校的格式)
-            if code == 0 and ('success' in message or 'success' in str(data.get('message', '')).lower()):
-                print("[解析响应] 登录成功 (code=0, message=success)")
-                return True, "登录成功！", data
-
-            # 检查 code: 0 单独出现
             if code == 0:
-                print("[解析响应] 登录成功 (code=0)")
+                logger.debug("[解析响应] 登录成功 (code=0)")
                 return True, "登录成功！", data
 
             # ===== 标准深澜响应格式 =====
@@ -396,36 +392,25 @@ class SrunEncryptedAuth:
 
             # 1. 签名错误（优先级最高）
             if 'sign_error' in error or 'sign_error' in res:
-                print("[解析响应] 签名错误")
                 return False, "认证签名错误，请检查账号密码或网络配置", data
 
             # 2. challenge过期错误
             if 'challenge_expire' in error or 'challenge_expire' in res:
-                print("[解析响应] Challenge已过期，需要重新获取")
                 return False, "Challenge已过期，请重试", data
 
-            # 3. 检查明确的成功标志（error 和 res 都必须是 'ok'）
-            if error == 'ok' and res == 'ok':
-                print("[解析响应] 登录成功 (error=ok & res=ok)")
-                return True, "登录成功！", data
-
-            # 4. 单独的 ok 标志
+            # 3. 检查明确的成功标志
             if error == 'ok' or res == 'ok':
-                print("[解析响应] 登录成功 (error/res=ok)")
                 return True, "登录成功！", data
 
-            # 5. 检查是否真的已在线（必须有明确的online关键词）
+            # 4. 检查是否已在线
             if 'already_online' in error or 'already_online' in res:
-                print("[解析响应] 用户已在线 (already_online)")
                 return True, "您已在线", data
 
             if 'online_num' in error or 'online_num' in res:
-                print("[解析响应] 用户已在线 (online_num)")
                 return True, "您已在线", data
 
-            # 6. 包含"在线"关键词的error_msg
+            # 5. 包含"在线"关键词的error_msg
             if '在线' in error_msg or 'online' in error_msg.lower():
-                print("[解析响应] 用户已在线 (关键词检测)")
                 return True, "您已在线", data
 
             # 失败
@@ -461,11 +446,8 @@ def test_encrypted_login():
     print(f"当前IP: {ip}")
 
     # 测试参数（替换为你的信息）
-    username = os.environ.get("SRUN_USERNAME", "")
-    password = os.environ.get("SRUN_PASSWORD", "")
-    if not username or not password:
-        print("请设置环境变量 SRUN_USERNAME 和 SRUN_PASSWORD")
-        return
+    username = "20241654@chinanet"
+    password = "your_password"  # 替换为真实密码
     ac_id = 1
 
     # 执行登录

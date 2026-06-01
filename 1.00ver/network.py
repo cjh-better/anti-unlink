@@ -7,14 +7,30 @@ import time
 import platform
 import socket
 import sys
-import winreg
 from logger import logger
+
+# Windows-only imports
+try:
+    import winreg
+    WINREG_AVAILABLE = True
+except ImportError:
+    WINREG_AVAILABLE = False
 
 # Windows下的常量定义
 if platform.system() == "Windows":
     CREATE_NO_WINDOW = 0x08000000
 else:
     CREATE_NO_WINDOW = 0
+
+_IS_WINDOWS = platform.system() == "Windows"
+
+
+def _subprocess_kwargs():
+    """Return platform-appropriate subprocess kwargs."""
+    kwargs = {}
+    if _IS_WINDOWS:
+        kwargs['creationflags'] = CREATE_NO_WINDOW
+    return kwargs
 
 def check_location_permission():
     """检测Windows位置权限是否已启用
@@ -24,7 +40,7 @@ def check_location_permission():
         False: 位置权限未启用
         None: 无法检测
     """
-    if platform.system() != "Windows":
+    if not _IS_WINDOWS or not WINREG_AVAILABLE:
         return None
 
     try:
@@ -48,9 +64,12 @@ def enable_wifi_adapter():
         True: 成功启用
         False: 启用失败
     """
+    if not _IS_WINDOWS:
+        return False
+
     try:
         cmd = 'netsh interface set interface name="WLAN" admin=enabled'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, **_subprocess_kwargs())
 
         if result.returncode == 0:
             time.sleep(2)
@@ -58,7 +77,7 @@ def enable_wifi_adapter():
         else:
             for interface_name in ["无线网络连接", "Wi-Fi", "Wireless Network Connection"]:
                 cmd = f'netsh interface set interface name="{interface_name}" admin=enabled'
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, **_subprocess_kwargs())
                 if result.returncode == 0:
                     time.sleep(2)
                     return True
@@ -77,11 +96,13 @@ def check_wifi_adapter_status():
         'disabled': WiFi适配器已禁用
         None: 无法检测或无WiFi适配器
     """
+    if not _IS_WINDOWS:
+        return None
+
     try:
         cmd = 'netsh wlan show interfaces'
-        result = subprocess.check_output(cmd, shell=True, creationflags=CREATE_NO_WINDOW, stderr=subprocess.STDOUT).decode('utf-8')
+        result = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, **_subprocess_kwargs()).decode('utf-8')
 
-        # 检查状态
         for line in result.split('\n'):
             if '状态' in line or 'State' in line:
                 if '已连接' in line or 'connected' in line.lower():
@@ -89,12 +110,10 @@ def check_wifi_adapter_status():
                 elif '已断开' in line or 'disconnected' in line.lower():
                     return 'disconnected'
 
-        # 如果没有找到状态信息,可能是未连接
         return 'disconnected'
     except subprocess.CalledProcessError:
-        # WiFi适配器可能被禁用
         return 'disabled'
-    except:
+    except Exception:
         return None
 
 def open_wifi_settings():
@@ -222,6 +241,10 @@ def get_current_ip():  # 返回ip值（优先WiFi，其次以太网）
 
 def get_connection_type():
     """检测当前连接类型：'wifi', 'ethernet', 'none'"""
+    if not _IS_WINDOWS:
+        ip = get_current_ip()
+        return 'ethernet' if ip else 'none'
+
     cmd = "ipconfig"
     result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -271,14 +294,15 @@ def get_connection_type():
         return 'none'
 
 def connect_to_wifi(ssid):  # 连接无密码网络
-    # 断开现有 WiFi 连接
-    wlan=get_connected_wifi()
+    if not _IS_WINDOWS:
+        return False
+
+    wlan = get_connected_wifi()
 
     if wlan != ssid:
         disconnect_result = subprocess.call(["netsh", "wlan", "disconnect"])
         if disconnect_result != 0:
             pass
- # 连接到指定 WiFi
         connect_result = subprocess.call(["netsh", "wlan", "connect", "name=" + ssid])
         if connect_result != 0:
             return False
@@ -297,6 +321,8 @@ def scan_open_wifi():
         'PERMISSION_DENIED': 需要位置权限
         'WIFI_DISABLED': WiFi适配器未启用或断开
     """
+    if not _IS_WINDOWS:
+        return None
 
     # 首先检查WiFi适配器状态
     wifi_status = check_wifi_adapter_status()
@@ -328,7 +354,7 @@ def scan_open_wifi():
 
     result = None
     try:
-        result = subprocess.check_output(cmd, shell=True, creationflags=CREATE_NO_WINDOW, stderr=subprocess.STDOUT).decode('gbk')
+        result = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, **_subprocess_kwargs()).decode('gbk')
     except subprocess.CalledProcessError as e:
         error_msg = e.output.decode('gbk', errors='ignore') if e.output else ""
         if "位置" in error_msg or "permission" in error_msg.lower() or "拒绝访问" in error_msg:
@@ -337,7 +363,7 @@ def scan_open_wifi():
             return 'WIFI_DISABLED'
     except Exception as e:
         try:
-            result = subprocess.check_output(cmd, shell=True, creationflags=CREATE_NO_WINDOW, stderr=subprocess.STDOUT).decode('utf-8')
+            result = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, **_subprocess_kwargs()).decode('utf-8')
         except Exception as e2:
             return 'WIFI_DISABLED'
 
@@ -393,30 +419,31 @@ def scan_open_wifi():
         return None
 
 def get_connected_wifi():
-    """获取当前连接的WiFi名称"""
+    """获取当前连接的WiFi名称。返回SSID字符串或None"""
+    if not _IS_WINDOWS:
+        return None
+
     cmd = 'netsh wlan show interfaces'
     try:
-        result = subprocess.check_output(cmd, shell=True, creationflags=CREATE_NO_WINDOW).decode('utf-8')
+        result = subprocess.check_output(cmd, shell=True, **_subprocess_kwargs()).decode('utf-8')
     except subprocess.CalledProcessError:
-        # WiFi适配器关闭或不可用
-        return False
-    except:
+        return None
+    except Exception:
         try:
-            result = subprocess.check_output(cmd, shell=True, creationflags=CREATE_NO_WINDOW).decode('gbk')
-        except subprocess.CalledProcessError:
-            return False
-        except Exception as e:
-            return False
+            result = subprocess.check_output(cmd, shell=True, **_subprocess_kwargs()).decode('gbk')
+        except Exception:
+            return None
 
     try:
         for line in result.split('\n'):
             if 'SSID' in line and 'BSSID' not in line:
                 ssid = line.split(':')[-1].strip()
-                return ssid
-    except Exception as e:
+                if ssid:
+                    return ssid
+    except Exception:
         pass
 
-    return False  # 此行不能改，否则造成循环
+    return None
 
 def connect_to_best_open_wifi():
     """自动连接信号最强的开放WiFi"""
@@ -426,9 +453,10 @@ def connect_to_best_open_wifi():
     return False
 
 
-def network_check(second=3):  # 默认3秒
-    net_list = ["https://daohang.qq.com/", "https://www.sogou.com", "https://cn.bing.com", "https://www.msn.cn"]    #ping检测池
-    net = net_list[random.randint(0, 3)]
+def network_check(timeout=3):
+    """Check internet connectivity by requesting a random URL from the pool."""
+    net_list = ["https://daohang.qq.com/", "https://www.sogou.com", "https://cn.bing.com", "https://www.msn.cn"]
+    net = random.choice(net_list)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -437,17 +465,9 @@ def network_check(second=3):  # 默认3秒
         "Connection": "keep-alive"
     }
     try:
-        # 访问搜索引擎，验证网络
-        resp = requests.get(net, timeout=second,headers=headers)  # 在列表中随机访问地址
-
-        if resp.status_code == 200:  # 根据返回页关键词调整 ,删除了"refresh" in resp.text or
-            return True
-        else:
-            return False
-
-    except (Exception,ConnectionError,requests.exceptions.RequestException) as e:  #Connected aborted  Connection aborted.', ConnectionResetError(10054, '远程主机强迫关闭了一个现有的连接。', None, 10054, None))
-        if "ConnectionResetError" in str(e):
-            return True
-        else:
-            return False
-
+        resp = requests.get(net, timeout=timeout, headers=headers)
+        return resp.status_code == 200
+    except ConnectionResetError:
+        return True
+    except requests.exceptions.RequestException:
+        return False

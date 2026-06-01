@@ -1,18 +1,37 @@
 # Python
 __pycache__/
 *.py[cod]
-*.egg-info/
-dist/
+*$py.class
+*.so
+
+# Distribution / packaging
 build/
+dist/
+*.egg-info/
+*.egg
+
+# PyInstaller
 *.spec
 
-# Config files with credentials
-campus_network_config.json
+# Executables & packages
+*.exe
+*.pkg
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+env/
+venv/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
