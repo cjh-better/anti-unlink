@@ -8,6 +8,7 @@ Windows电源事件监控模块
 
 import win32gui
 import win32con
+import win32api
 import threading
 from PySide6.QtCore import QObject, Signal
 
@@ -79,10 +80,14 @@ class PowerEventMonitor(QObject):
 
         if self.hwnd:
             try:
+                win32gui.PostMessage(self.hwnd, win32con.WM_QUIT, 0, 0)
                 win32gui.DestroyWindow(self.hwnd)
-            except:
+            except Exception:
                 pass
             self.hwnd = None
+
+        if self.pump_thread and self.pump_thread.is_alive():
+            self.pump_thread.join(timeout=2)
 
         print("电源监控已停止")
 

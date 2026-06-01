@@ -42,6 +42,33 @@ except ImportError:
     POWER_MONITOR_AVAILABLE = False
 
 
+class WifiConnectThread(QThread):
+    """WiFi连接线程，避免UI阻塞"""
+    ip_acquired = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, ssid):
+        super().__init__()
+        self.ssid = ssid
+
+    def run(self):
+        try:
+            if not network.connect_to_wifi(self.ssid):
+                self.failed.emit(f"连接到 {self.ssid} 失败")
+                return
+
+            for _ in range(20):
+                time.sleep(0.5)
+                current_ip = network.get_current_ip()
+                if current_ip:
+                    self.ip_acquired.emit(current_ip)
+                    return
+
+            self.failed.emit("WiFi已连接但未获取IP")
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class AuthThread(QThread):
     """单次认证线程"""
     finished = Signal(bool, str)
@@ -253,6 +280,8 @@ class CampusNetworkWindow(QMainWindow):
         self.stats = NetworkStats()
         self.auth_thread = None
         self.monitor_thread = None
+        self._monitor_auth_thread = None
+        self._wifi_connect_thread = None
         self.is_monitoring = False
         self.power_monitor = None
         self.tray_icon = None
@@ -795,29 +824,26 @@ class CampusNetworkWindow(QMainWindow):
 
             if best_ssid:
                 self.update_status(f"找到校园网: {best_ssid},正在连接...")
-
-                if network.connect_to_wifi(best_ssid):
-                    self.update_status(f"✓ 成功连接到 {best_ssid},等待IP分配...")
-
-                    for i in range(20):
-                        QTimer.singleShot(500 * i, lambda: None)
-                        time.sleep(0.5)
-                        current_ip = network.get_current_ip()
-                        if current_ip:
-                            self.update_status(f"✓ 已获取IP: {current_ip},开始认证...")
-                            QTimer.singleShot(500, self.start_auth)
-                            return
-
-                    self.update_status("⚠ WiFi已连接但未获取IP,尝试认证...", error=True)
-                    QTimer.singleShot(500, self.start_auth)
-                else:
-                    self.update_status(f"✗ 连接到 {best_ssid} 失败", error=True)
+                self._wifi_connect_thread = WifiConnectThread(best_ssid)
+                self._wifi_connect_thread.ip_acquired.connect(self._on_wifi_connected)
+                self._wifi_connect_thread.failed.connect(self._on_wifi_failed)
+                self._wifi_connect_thread.start()
             else:
                 self.update_status("✗ 未找到开放的校园网WiFi", error=True)
 
         except Exception as e:
             logger.error(f"WiFi连接失败: {e}")
             self.update_status(f"✗ WiFi连接失败: {str(e)}", error=True)
+
+    def _on_wifi_connected(self, ip):
+        """工作线程拨号回IP后开始认证"""
+        self.update_status(f"✓ 已获取IP: {ip},开始认证...")
+        QTimer.singleShot(500, self.start_auth)
+
+    def _on_wifi_failed(self, message):
+        """工作线程WiFi连接失败"""
+        self.update_status(f"⚠ {message},尝试认证...", error=True)
+        QTimer.singleShot(500, self.start_auth)
 
     def show_wifi_disabled_dialog(self):
         """显示WiFi未连接提示对话框"""
@@ -965,10 +991,10 @@ class CampusNetworkWindow(QMainWindow):
         operator = self.get_selected_operator()
 
         if username and password:
-            auth_thread = AuthThread(username, password, operator)
-            auth_thread.finished.connect(self.on_monitor_auth_finished)
-            auth_thread.finished.connect(auth_thread.deleteLater)
-            auth_thread.start()
+            self._monitor_auth_thread = AuthThread(username, password, operator)
+            self._monitor_auth_thread.finished.connect(self.on_monitor_auth_finished)
+            self._monitor_auth_thread.finished.connect(self._monitor_auth_thread.deleteLater)
+            self._monitor_auth_thread.start()
         else:
             self.update_status("✗ 认证信息不完整，无法重新认证", error=True)
             logger.warning("认证信息不完整")
@@ -1035,13 +1061,13 @@ class CampusNetworkWindow(QMainWindow):
         operator = self.get_selected_operator()
 
         if username and password:
-            auth_thread = AuthThread(username, password, operator)
-            auth_thread.finished.connect(lambda s, m: self.update_status(
+            self._monitor_auth_thread = AuthThread(username, password, operator)
+            self._monitor_auth_thread.finished.connect(lambda s, m: self.update_status(
                 f"✓ 唤醒后认证成功: {m}" if s else f"✗ 唤醒后认证失败: {m}",
                 error=not s
             ))
-            auth_thread.finished.connect(auth_thread.deleteLater)
-            auth_thread.start()
+            self._monitor_auth_thread.finished.connect(self._monitor_auth_thread.deleteLater)
+            self._monitor_auth_thread.start()
 
         if self.is_monitoring and (not self.monitor_thread or not self.monitor_thread.isRunning()):
             self.is_monitoring = False

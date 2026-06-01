@@ -51,26 +51,15 @@ def check_dependencies():
     
     # 检查其他依赖
     dependencies = [
-        'tkinter',
-        'PIL',
+        'PySide6',
         'requests',
-        'pystray',
-        'maliang',
+        'cryptography',
     ]
     
     missing = []
     for dep in dependencies:
         try:
-            if dep == 'tkinter':
-                import tkinter
-            elif dep == 'PIL':
-                import PIL
-            elif dep == 'requests':
-                import requests
-            elif dep == 'pystray':
-                import pystray
-            elif dep == 'maliang':
-                import maliang
+            __import__(dep)
             print(f"[OK] {dep}: 已安装")
         except ImportError:
             print(f"[ERROR] {dep}: 未安装")

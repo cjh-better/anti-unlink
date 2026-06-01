@@ -7,8 +7,19 @@
 
 import json
 import base64
+import os
+import hashlib
 from pathlib import Path
 from typing import Dict, Optional
+
+# Fernet provides real symmetric encryption (AES-128-CBC + HMAC-SHA256).
+# We derive a stable, machine-specific key so the config file is not
+# trivially decodable by copying it to another machine.
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+    FERNET_AVAILABLE = True
+except ImportError:
+    FERNET_AVAILABLE = False
 
 
 class ConfigManager:
@@ -21,17 +32,43 @@ class ConfigManager:
             self.config_path = config_path
 
         self.config = {}
+        self._fernet = self._init_fernet()
+
+    @staticmethod
+    def _derive_key() -> bytes:
+        """Derive a machine-specific Fernet key from the username + hostname."""
+        seed = f"{os.getlogin()}@{os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', '')}"
+        digest = hashlib.sha256(seed.encode('utf-8')).digest()
+        return base64.urlsafe_b64encode(digest)
+
+    def _init_fernet(self):
+        if not FERNET_AVAILABLE:
+            return None
+        try:
+            return Fernet(self._derive_key())
+        except Exception:
+            return None
 
     def encrypt_password(self, password: str) -> str:
-        """简单加密密码（Base64）"""
+        """Encrypt password using Fernet (AES) when available, Base64 fallback."""
         if not password:
             return ""
+        if self._fernet:
+            try:
+                return "FERNET:" + self._fernet.encrypt(password.encode('utf-8')).decode('utf-8')
+            except Exception:
+                pass
         return base64.b64encode(password.encode('utf-8')).decode('utf-8')
 
     def decrypt_password(self, encrypted: str) -> str:
-        """解密密码"""
+        """Decrypt password. Handles both Fernet and legacy Base64 formats."""
         if not encrypted:
             return ""
+        if encrypted.startswith("FERNET:") and self._fernet:
+            try:
+                return self._fernet.decrypt(encrypted[7:].encode('utf-8')).decode('utf-8')
+            except (InvalidToken, Exception):
+                return encrypted
         try:
             return base64.b64decode(encrypted.encode('utf-8')).decode('utf-8')
         except Exception:
