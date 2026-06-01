@@ -6,6 +6,7 @@
 """
 import hashlib
 import json
+import os
 import time
 import hmac
 import base64
@@ -248,7 +249,6 @@ class SrunEncryptedAuth:
             challenge_url = self.portal_url.replace('/srun_portal', '/get_challenge')
 
             print(f"[获取Challenge] URL: {challenge_url}")
-            print(f"[获取Challenge] 用户名: {username}, IP: {ip}")
 
             response = self.session.get(
                 challenge_url,
@@ -257,7 +257,7 @@ class SrunEncryptedAuth:
                 timeout=5
             )
 
-            print(f"[获取Challenge] 响应: {response.text[:200]}")
+            print("[获取Challenge] 已收到响应")
 
             # 解析JSONP响应
             match = re.search(r'jQuery\w+\((.*)\)', response.text)
@@ -291,17 +291,12 @@ class SrunEncryptedAuth:
                 print("[加密登录] 错误: 未能获取challenge")
                 return False, "无法获取Challenge，请检查网络", None
 
-            print(f"[加密登录] Challenge: {challenge}")
-
             # 1. 生成HMAC-MD5加密的密码
             hmac_md5 = get_hmac_md5(password, challenge)  # 仅HMAC-MD5值
             hmac_password = "{MD5}" + hmac_md5  # 带前缀的完整密码
-            print(f"[加密登录] HMAC-MD5: {hmac_md5}")
-            print(f"[加密登录] HMAC-MD5密码: {hmac_password}")
 
             # 2. 生成info参数 (使用challenge作为xEncode的key)
             info_param = get_info(username, password, ip, ac_id, challenge)
-            print(f"[加密登录] Info参数 (前50字符): {info_param[:50]}...")
 
             # 3. 计算chksum（UCAS算法：每个字段之间都插入token）
             chkstr = challenge + username
@@ -312,18 +307,6 @@ class SrunEncryptedAuth:
             chkstr += challenge + "1"    # type参数
             chkstr += challenge + info_param
             chksum = get_sha1(chkstr)
-
-            print(f"[加密登录] === Chksum详细信息 (UCAS算法) ===")
-            print(f"[加密登录] Challenge: {challenge}")
-            print(f"[加密登录] Username: {username}")
-            print(f"[加密登录] HMAC-MD5 (无前缀): {hmac_md5}")
-            print(f"[加密登录] AC_ID: {ac_id}")
-            print(f"[加密登录] IP: {ip}")
-            print(f"[加密登录] N: 200")
-            print(f"[加密登录] Type: 1")
-            print(f"[加密登录] Info (前100字符): {info_param[:100]}")
-            print(f"[加密登录] Chksum计算字符串长度: {len(chkstr)}")
-            print(f"[加密登录] Chksum: {chksum}")
 
             # 4. 生成callback（模拟jQuery）
             timestamp = int(time.time() * 1000)
@@ -356,10 +339,7 @@ class SrunEncryptedAuth:
             }
 
             # 7. 发送请求
-            print(f"[加密登录] 正在发送认证请求...")
-            print(f"[加密登录] URL: {self.portal_url}")
-            print(f"[加密登录] 用户名: {username}")
-            print(f"[加密登录] IP: {ip}")
+            print("[加密登录] 正在发送认证请求...")
 
             response = self.session.get(
                 self.portal_url,
@@ -369,7 +349,6 @@ class SrunEncryptedAuth:
             )
 
             print(f"[加密登录] HTTP状态码: {response.status_code}")
-            print(f"[加密登录] 响应内容: {response.text[:500]}")
 
             # 8. 解析响应
             return self._parse_response(response.text)
@@ -392,8 +371,6 @@ class SrunEncryptedAuth:
             else:
                 # 尝试直接解析JSON
                 data = json.loads(response_text)
-
-            print(f"[解析响应] JSON数据: {data}")
 
             # 检查多种可能的字段
             error = str(data.get('error', '')).lower()
@@ -484,8 +461,11 @@ def test_encrypted_login():
     print(f"当前IP: {ip}")
 
     # 测试参数（替换为你的信息）
-    username = "20241654@chinanet"
-    password = "your_password"  # 替换为真实密码
+    username = os.environ.get("SRUN_USERNAME", "")
+    password = os.environ.get("SRUN_PASSWORD", "")
+    if not username or not password:
+        print("请设置环境变量 SRUN_USERNAME 和 SRUN_PASSWORD")
+        return
     ac_id = 1
 
     # 执行登录

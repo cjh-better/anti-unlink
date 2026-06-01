@@ -61,7 +61,7 @@ class AuthThread(QThread):
                 return
 
             full_username = self.username + self.operator
-            logger.info(f"开始认证: {full_username}, IP: {current_ip}")
+            logger.info(f"开始认证: IP: {current_ip}")
 
             success, message, data = srun_encrypted_auth.login(
                 full_username, self.password, current_ip, ac_id=1

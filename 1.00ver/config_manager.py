@@ -7,6 +7,8 @@
 
 import json
 import base64
+import os
+import stat
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -22,20 +24,27 @@ class ConfigManager:
 
         self.config = {}
 
-    def encrypt_password(self, password: str) -> str:
-        """简单加密密码（Base64）"""
+    def _obfuscate_password(self, password: str) -> str:
+        """混淆密码（Base64编码，仅防止肉眼可见，并非真正加密）"""
         if not password:
             return ""
         return base64.b64encode(password.encode('utf-8')).decode('utf-8')
 
-    def decrypt_password(self, encrypted: str) -> str:
-        """解密密码"""
-        if not encrypted:
+    def _deobfuscate_password(self, encoded: str) -> str:
+        """反混淆密码"""
+        if not encoded:
             return ""
         try:
-            return base64.b64decode(encrypted.encode('utf-8')).decode('utf-8')
+            return base64.b64decode(encoded.encode('utf-8')).decode('utf-8')
         except Exception:
-            return encrypted
+            return encoded
+
+    # Keep old names as aliases for backward compatibility
+    def encrypt_password(self, password: str) -> str:
+        return self._obfuscate_password(password)
+
+    def decrypt_password(self, encrypted: str) -> str:
+        return self._deobfuscate_password(encrypted)
 
     def load(self) -> Dict:
         """加载配置"""
@@ -82,6 +91,12 @@ class ConfigManager:
 
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(save_config, f, ensure_ascii=False, indent=2)
+
+            # Restrict file permissions to owner-only (cross-platform best-effort)
+            try:
+                self.config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
 
             return True
         except Exception as e:
